@@ -5,8 +5,8 @@ import { createClient } from "@supabase/supabase-js";
 // ⚠️ 여기 2줄만 수정하세요!
 // Supabase 프로젝트 설정 > API Keys 메뉴에서 복사해서 붙여넣기
 // ═══════════════════════════════════════════════════════════
-const SUPABASE_URL = "https://lrtqrngbgzkkxnypouvj.supabase.co";
-const SUPABASE_ANON_KEY = "sb_publishable__lSnba-jeLmVzjrB24D1gA_ByhunaT5";
+ const SUPABASE_URL = "https://lrtqrngbgzkkxnypouvj.supabase.co";
+ const SUPABASE_ANON_KEY = "sb_publishable__lSnba-jeLmVzjrB24D1gA_ByhunaT5";
 // ═══════════════════════════════════════════════════════════
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -146,7 +146,7 @@ function ReviewForm({ rules, reload, showToast }) {
   const [ocrLoading, setOcrLoading] = useState(false);
   const [ocrProgress, setOcrProgress] = useState(0);
   const [tesseractReady, setTesseractReady] = useState(false);
-  const [manualIssues, setManualIssues] = useState([{ problem: "", suggestion: "", saveAsRule: true }]);
+  const [manualIssues, setManualIssues] = useState([{ description: "", keyword: "", suggestion: "", saveAsRule: false }]);
   const fileInputRef = useRef();
 
   // Tesseract.js 로드
@@ -217,22 +217,22 @@ function ReviewForm({ rules, reload, showToast }) {
     setManualIssues(next);
   };
 
-  const addIssue = () => setManualIssues([...manualIssues, { problem: "", suggestion: "", saveAsRule: true }]);
+  const addIssue = () => setManualIssues([...manualIssues, { description: "", keyword: "", suggestion: "", saveAsRule: false }]);
   const removeIssue = (i) => setManualIssues(manualIssues.filter((_, idx) => idx !== i));
 
   const handleReset = () => {
     setImageFile(null); setImagePreview(null); setImageInfo(null);
     setOcrText(""); setProduct(""); setReviewer("");
-    setManualIssues([{ problem: "", suggestion: "", saveAsRule: true }]);
+    setManualIssues([{ description: "", keyword: "", suggestion: "", saveAsRule: false }]);
   };
 
   const handleSave = async () => {
     if (!imagePreview) { showToast("이미지를 먼저 업로드해주세요", "error"); return; }
     if (!ocrText.trim()) { showToast("텍스트 추출 후 저장해주세요", "error"); return; }
 
-    const validIssues = manualIssues.filter(i => i.problem.trim());
+    const validIssues = manualIssues.filter(i => i.description.trim() || i.keyword.trim());
     
-    // 1) 검수 이력 저장
+    // 1) 검수 이력 저장 (의견 description + 수정 제안)
     const totalIssues = autoDetections.length + validIssues.length;
     const { error } = await supabase.from("cs_reviews").insert({
       reviewer: reviewer.trim() || "미기명",
@@ -240,18 +240,21 @@ function ReviewForm({ rules, reload, showToast }) {
       product: product.trim() || "-",
       ocr_text: ocrText,
       auto_detections: autoDetections.map(d => ({ problem: d.problem, suggestion: d.suggestion })),
-      manual_issues: validIssues.map(i => ({ problem: i.problem, suggestion: i.suggestion })),
+      manual_issues: validIssues.map(i => ({ 
+        problem: i.description.trim() || i.keyword.trim(),
+        suggestion: i.suggestion.trim() 
+      })),
       total_issue_count: totalIssues,
       status: totalIssues === 0 ? "통과" : "수정필요",
       thumbnail: imagePreview.slice(0, 50000),
     });
     if (error) { showToast("저장 실패: " + error.message, "error"); return; }
 
-    // 2) "규칙 DB에 저장" 체크된 항목들을 규칙으로 등록
+    // 2) "규칙 DB에 저장" 체크된 항목들을 규칙으로 등록 (키워드 + 수정 제안만!)
     const newRules = validIssues
-      .filter(i => i.saveAsRule && i.problem.trim() && i.suggestion.trim())
+      .filter(i => i.saveAsRule && i.keyword.trim() && i.suggestion.trim())
       .map(i => ({
-        problem: i.problem.trim(),
+        problem: i.keyword.trim(),
         suggestion: i.suggestion.trim(),
         channels: [channel],
         is_common: false,
@@ -373,36 +376,60 @@ function ReviewForm({ rules, reload, showToast }) {
               <label className="form-label" style={{marginTop: 12}}>
                 검수자가 추가로 발견한 문제 <span style={{color: COLORS.textLight, fontWeight: 400}}>(이미지 요소 등)</span>
               </label>
-              {manualIssues.map((issue, i) => (
+              {manualIssues.map((issue, i) => {
+                const canSaveAsRule = issue.keyword.trim() && issue.suggestion.trim();
+                return (
                 <div key={i} style={{background: COLORS.bg, border: `0.5px solid ${COLORS.border}`, borderRadius: 5, padding: "10px 12px", marginBottom: 8}}>
-                  <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6}}>
+                  <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8}}>
                     <span style={{fontSize: 11, fontWeight: 500, color: "#555"}}>문제점 {i+1}</span>
-                    <div style={{display: "flex", alignItems: "center", gap: 8}}>
-                      <label style={{fontSize: 10, color: COLORS.textHint, display: "inline-flex", alignItems: "center", gap: 4, cursor: "pointer"}}>
-                        <input type="checkbox" checked={issue.saveAsRule} onChange={e => updateIssue(i, "saveAsRule", e.target.checked)} style={{width: 11, height: 11}}/>
-                        규칙 DB에 저장
-                      </label>
-                      {manualIssues.length > 1 && (
-                        <button onClick={() => removeIssue(i)} style={{background: "transparent", border: "none", color: COLORS.textHint, cursor: "pointer", fontSize: 14, padding: 0}}>✕</button>
-                      )}
-                    </div>
+                    {manualIssues.length > 1 && (
+                      <button onClick={() => removeIssue(i)} style={{background: "transparent", border: "none", color: COLORS.textHint, cursor: "pointer", fontSize: 14, padding: 0}}>✕</button>
+                    )}
                   </div>
+
+                  <label className="form-label">문제 설명 / 의견 <span style={{color: COLORS.textLight, fontWeight: 400}}>(이력에만 저장 · 길게 적어도 OK)</span></label>
                   <textarea
                     className="form-input form-textarea"
-                    value={issue.problem}
-                    onChange={e => updateIssue(i, "problem", e.target.value)}
-                    placeholder="발견한 문제를 구체적으로 작성해주세요"
-                    style={{minHeight: 50}}
+                    value={issue.description}
+                    onChange={e => updateIssue(i, "description", e.target.value)}
+                    placeholder="예: 사전예약 형태인데 '지연'이라는 단어가 부정적 인상을 줌"
+                    style={{minHeight: 50, marginBottom: 8}}
                   />
-                  <label className="form-label" style={{margin: "8px 0 4px"}}>수정 제안</label>
-                  <input
-                    className="form-input"
-                    value={issue.suggestion}
-                    onChange={e => updateIssue(i, "suggestion", e.target.value)}
-                    placeholder="대체 표현 또는 수정 방향"
-                  />
+
+                  <div style={{background: "#fff", border: `0.5px dashed ${COLORS.borderInput}`, borderRadius: 5, padding: "10px 12px", marginTop: 4}}>
+                    <div style={{fontSize: 10, color: COLORS.textHint, marginBottom: 6, fontWeight: 500, letterSpacing: "0.5px"}}>
+                      🔁 다음에도 자동 감지하려면 ↓
+                    </div>
+                    <label className="form-label">자동 감지 키워드 <span style={{color: COLORS.textLight, fontWeight: 400}}>(짧게! 예: "배송 지연")</span></label>
+                    <input
+                      className="form-input"
+                      value={issue.keyword}
+                      onChange={e => updateIssue(i, "keyword", e.target.value)}
+                      placeholder="예: 배송 지연"
+                      style={{marginBottom: 6}}
+                    />
+                    <label className="form-label">수정 제안 <span style={{color: COLORS.textLight, fontWeight: 400}}>(대체할 표현)</span></label>
+                    <input
+                      className="form-input"
+                      value={issue.suggestion}
+                      onChange={e => updateIssue(i, "suggestion", e.target.value)}
+                      placeholder="예: 배송 일정"
+                      style={{marginBottom: 8}}
+                    />
+                    <label style={{fontSize: 11, color: canSaveAsRule ? COLORS.text : COLORS.textLight, display: "inline-flex", alignItems: "center", gap: 5, cursor: canSaveAsRule ? "pointer" : "not-allowed"}}>
+                      <input 
+                        type="checkbox" 
+                        checked={issue.saveAsRule && canSaveAsRule} 
+                        disabled={!canSaveAsRule}
+                        onChange={e => updateIssue(i, "saveAsRule", e.target.checked)} 
+                        style={{width: 12, height: 12}}
+                      />
+                      규칙 DB에 저장 {!canSaveAsRule && <span style={{fontSize: 10, color: COLORS.textLight}}>(키워드와 수정 제안 모두 입력 필요)</span>}
+                    </label>
+                  </div>
                 </div>
-              ))}
+              );
+              })}
               <button onClick={addIssue} style={{width: "100%", padding: 8, fontSize: 12, background: "transparent", border: `1px dashed ${COLORS.textLight}`, color: COLORS.textHint, borderRadius: 5, cursor: "pointer", marginTop: 4}}>
                 + 문제점 추가
               </button>
