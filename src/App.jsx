@@ -158,11 +158,12 @@ function ReviewForm({ rules, reload, showToast }) {
   const autoDetections = useMemo(() => {
     if (!ocrText.trim()) return [];
     const matches = [];
+    // 공백, 줄바꿈, 탭 등 모든 공백 문자를 제거한 텍스트 (한국어 OCR 특성 대응)
+    const normalizedText = ocrText.toLowerCase().replace(/\s+/g, "");
     rules.forEach(rule => {
       if (!rule.is_common && !rule.channels?.includes(channel)) return;
-      const lower = ocrText.toLowerCase();
-      const term = rule.problem.toLowerCase();
-      if (lower.includes(term)) {
+      const normalizedTerm = rule.problem.toLowerCase().replace(/\s+/g, "");
+      if (normalizedText.includes(normalizedTerm)) {
         matches.push(rule);
       }
     });
