@@ -38,6 +38,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
   const [showRulesModal, setShowRulesModal] = useState(false);
+  const [detailReview, setDetailReview] = useState(null);
 
   useEffect(() => { loadData(); }, []);
 
@@ -45,7 +46,7 @@ export default function App() {
     setLoading(true);
     const [rulesRes, histRes] = await Promise.all([
       supabase.from("cs_rules").select("*").order("created_at", { ascending: false }),
-      supabase.from("cs_reviews").select("*").order("created_at", { ascending: false }).limit(10),
+      supabase.from("cs_reviews").select("*").order("created_at", { ascending: false }).limit(100),
     ]);
     if (rulesRes.data) setRules(rulesRes.data);
     if (histRes.data) setHistory(histRes.data);
@@ -71,10 +72,13 @@ export default function App() {
       <Header onShowRules={() => setShowRulesModal(true)} ruleCount={rules.length}/>
       <main style={{maxWidth: 1400, margin: "0 auto", padding: "24px 28px 80px"}}>
         <ReviewForm rules={rules} reload={loadData} showToast={showToast}/>
-        <HistorySection history={history}/>
+        <HistorySection history={history} onCardClick={setDetailReview}/>
       </main>
       {showRulesModal && (
         <RulesModal rules={rules} reload={loadData} showToast={showToast} onClose={() => setShowRulesModal(false)}/>
+      )}
+      {detailReview && (
+        <ReviewDetailModal review={detailReview} reload={loadData} showToast={showToast} onClose={() => setDetailReview(null)}/>
       )}
       {toast && <Toast {...toast}/>}
     </div>
@@ -432,9 +436,14 @@ function Panel({ step, title, children }) {
 }
 
 // ───────────────────────────────────────────────────────────
-// 검수 이력 섹션
+// 검수 이력 섹션 (검색/필터/클릭 상세보기)
 // ───────────────────────────────────────────────────────────
-function HistorySection({ history }) {
+function HistorySection({ history, onCardClick }) {
+  const [search, setSearch] = useState("");
+  const [channelFilter, setChannelFilter] = useState("전체");
+  const [statusFilter, setStatusFilter] = useState("전체");
+  const [showCount, setShowCount] = useState(10);
+
   const formatTime = (ts) => {
     const diff = Date.now() - new Date(ts).getTime();
     const m = Math.floor(diff / 60000);
@@ -442,8 +451,27 @@ function HistorySection({ history }) {
     if (m < 60) return `${m}분 전`;
     const h = Math.floor(m / 60);
     if (h < 24) return `${h}시간 전`;
-    return `${Math.floor(h/24)}일 전`;
+    const d = Math.floor(h/24);
+    if (d < 30) return `${d}일 전`;
+    const date = new Date(ts);
+    return `${date.getMonth()+1}/${date.getDate()}`;
   };
+
+  const filtered = useMemo(() => {
+    return history.filter(h => {
+      if (channelFilter !== "전체" && h.channel !== channelFilter) return false;
+      if (statusFilter === "통과" && h.total_issue_count > 0) return false;
+      if (statusFilter === "수정필요" && h.total_issue_count === 0) return false;
+      if (search.trim()) {
+        const s = search.toLowerCase();
+        const fields = [h.product, h.reviewer, h.ocr_text, h.channel].filter(Boolean).join(" ").toLowerCase();
+        if (!fields.includes(s)) return false;
+      }
+      return true;
+    });
+  }, [history, search, channelFilter, statusFilter]);
+
+  const visible = filtered.slice(0, showCount);
 
   if (history.length === 0) {
     return (
@@ -459,35 +487,193 @@ function HistorySection({ history }) {
   return (
     <div style={{marginTop: 24}}>
       <p style={{fontSize: 14, fontWeight: 500, margin: "0 0 12px", display: "flex", justifyContent: "space-between", alignItems: "center"}}>
-        최근 검수 이력
-        <span style={{fontSize: 11, color: COLORS.textHint, fontWeight: 400}}>최근 {history.length}건</span>
+        검수 이력
+        <span style={{fontSize: 11, color: COLORS.textHint, fontWeight: 400}}>
+          {filtered.length === history.length ? `총 ${history.length}건` : `${filtered.length}건 검색됨 (총 ${history.length}건)`}
+        </span>
       </p>
-      <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8}}>
-        {history.map(h => (
-          <div key={h.id} style={{background: COLORS.panel, border: `0.5px solid ${COLORS.border}`, borderRadius: 8, padding: "10px 12px", display: "grid", gridTemplateColumns: "44px 1fr", gap: 12, alignItems: "center"}}>
-            <div style={{width: 44, height: 44, background: h.thumbnail || COLORS.surface, backgroundSize: "cover", backgroundPosition: "center", borderRadius: 5, display: "flex", alignItems: "center", justifyContent: "center"}}>
-              {h.thumbnail && h.thumbnail.startsWith("data:image") ? (
-                <img src={h.thumbnail} alt="" style={{width: "100%", height: "100%", objectFit: "cover", borderRadius: 5}}/>
+
+      <div style={{background: COLORS.panel, border: `0.5px solid ${COLORS.border}`, borderRadius: 10, padding: 14, marginBottom: 12}}>
+        <div style={{display: "flex", gap: 8, marginBottom: 10}}>
+          <input
+            placeholder="제품명, 검수자, 채널, OCR 텍스트로 검색..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            style={{flex: 1, padding: "7px 11px", fontSize: 12, border: `0.5px solid ${COLORS.borderInput}`, borderRadius: 5, background: "#fff"}}
+          />
+        </div>
+        <div style={{display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center"}}>
+          <span style={{fontSize: 11, color: COLORS.textHint, marginRight: 4}}>상태:</span>
+          {["전체", "통과", "수정필요"].map(f => (
+            <button key={f} onClick={() => setStatusFilter(f)} style={{
+              padding: "4px 10px", fontSize: 11, borderRadius: 12,
+              background: statusFilter === f ? COLORS.text : "#fff",
+              color: statusFilter === f ? "#fff" : "#555",
+              border: `0.5px solid ${statusFilter === f ? COLORS.text : COLORS.borderInput}`,
+              cursor: "pointer"
+            }}>{f}</button>
+          ))}
+          <span style={{fontSize: 11, color: COLORS.textHint, marginLeft: 8, marginRight: 4}}>채널:</span>
+          {["전체", ...CHANNELS].map(f => (
+            <button key={f} onClick={() => setChannelFilter(f)} style={{
+              padding: "4px 10px", fontSize: 11, borderRadius: 12,
+              background: channelFilter === f ? COLORS.text : "#fff",
+              color: channelFilter === f ? "#fff" : "#555",
+              border: `0.5px solid ${channelFilter === f ? COLORS.text : COLORS.borderInput}`,
+              cursor: "pointer"
+            }}>{f}</button>
+          ))}
+        </div>
+      </div>
+
+      {filtered.length === 0 ? (
+        <div style={{background: COLORS.panel, border: `0.5px solid ${COLORS.border}`, borderRadius: 10, padding: 30, textAlign: "center", color: COLORS.textLight, fontSize: 13}}>
+          검색 결과가 없습니다
+        </div>
+      ) : (
+        <>
+          <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8}}>
+            {visible.map(h => {
+              const displayTitle = h.product && h.product !== "-" 
+                ? h.product 
+                : (h.ocr_text ? h.ocr_text.split("\n")[0].slice(0, 40) : "이름 없음");
+              return (
+                <div
+                  key={h.id}
+                  onClick={() => onCardClick(h)}
+                  style={{background: COLORS.panel, border: `0.5px solid ${COLORS.border}`, borderRadius: 8, padding: "10px 12px", display: "grid", gridTemplateColumns: "44px 1fr", gap: 12, alignItems: "center", cursor: "pointer", transition: "all 0.15s"}}
+                  onMouseEnter={e => e.currentTarget.style.borderColor = COLORS.text}
+                  onMouseLeave={e => e.currentTarget.style.borderColor = COLORS.border}
+                >
+                  <div style={{width: 44, height: 44, background: COLORS.surface, borderRadius: 5, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden"}}>
+                    {h.thumbnail && h.thumbnail.startsWith("data:image") ? (
+                      <img src={h.thumbnail} alt="" style={{width: "100%", height: "100%", objectFit: "cover"}}/>
+                    ) : (
+                      <span style={{fontSize: 16}}>📄</span>
+                    )}
+                  </div>
+                  <div style={{minWidth: 0}}>
+                    <p style={{fontSize: 12, fontWeight: 500, margin: "0 0 2px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap"}}>{displayTitle}</p>
+                    <div style={{fontSize: 10, color: COLORS.textHint, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap"}}>
+                      <span>{h.reviewer}</span>
+                      <span style={{width: 2, height: 2, background: COLORS.textLight, borderRadius: "50%"}}/>
+                      <span>{formatTime(h.created_at)}</span>
+                      <span style={{width: 2, height: 2, background: COLORS.textLight, borderRadius: "50%"}}/>
+                      <span style={{background: "#F1EFE8", color: "#444", padding: "1px 5px", borderRadius: 6, fontSize: 9}}>{h.channel}</span>
+                      <span style={{width: 2, height: 2, background: COLORS.textLight, borderRadius: "50%"}}/>
+                      <span style={{color: h.total_issue_count > 0 ? COLORS.accentText : COLORS.success, fontWeight: 500}}>
+                        {h.total_issue_count > 0 ? `⚠ ${h.total_issue_count}건` : "✓ 통과"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {filtered.length > showCount && (
+            <button
+              onClick={() => setShowCount(showCount + 20)}
+              style={{display: "block", margin: "16px auto 0", padding: "8px 20px", fontSize: 12, background: "transparent", border: `0.5px solid ${COLORS.borderInput}`, borderRadius: 6, cursor: "pointer", color: COLORS.text}}
+            >
+              {filtered.length - showCount}건 더 보기
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────
+// 검수 이력 상세 모달
+// ───────────────────────────────────────────────────────────
+function ReviewDetailModal({ review, reload, showToast, onClose }) {
+  const handleDelete = async () => {
+    if (!confirm("이 검수 이력을 삭제하시겠습니까?")) return;
+    const { error } = await supabase.from("cs_reviews").delete().eq("id", review.id);
+    if (error) { showToast("삭제 실패: " + error.message, "error"); return; }
+    await reload();
+    showToast("삭제 완료");
+    onClose();
+  };
+
+  const date = new Date(review.created_at);
+  const dateStr = `${date.getFullYear()}.${String(date.getMonth()+1).padStart(2,"0")}.${String(date.getDate()).padStart(2,"0")} ${String(date.getHours()).padStart(2,"0")}:${String(date.getMinutes()).padStart(2,"0")}`;
+  const issuesTotal = (review.auto_detections?.length || 0) + (review.manual_issues?.length || 0);
+
+  return (
+    <div style={{position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20}} onClick={onClose}>
+      <div style={{background: "#fff", borderRadius: 12, width: "100%", maxWidth: 880, maxHeight: "90vh", display: "flex", flexDirection: "column"}} onClick={e => e.stopPropagation()}>
+        <div style={{padding: "20px 24px", borderBottom: `0.5px solid ${COLORS.border}`, display: "flex", justifyContent: "space-between", alignItems: "center"}}>
+          <div>
+            <h2 style={{margin: 0, fontSize: 18, fontWeight: 600}}>검수 상세</h2>
+            <p style={{margin: "3px 0 0", fontSize: 12, color: COLORS.textHint}}>{dateStr} · {review.reviewer} · {review.channel}</p>
+          </div>
+          <button onClick={onClose} style={{background: "transparent", border: "none", fontSize: 22, cursor: "pointer", color: COLORS.textHint}}>✕</button>
+        </div>
+
+        <div style={{padding: "20px 24px", overflowY: "auto", flex: 1}}>
+          <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20}}>
+            <div>
+              <div style={{fontSize: 11, fontWeight: 500, color: COLORS.textHint, letterSpacing: "1px", textTransform: "uppercase", marginBottom: 8}}>검수 이미지</div>
+              {review.thumbnail && review.thumbnail.startsWith("data:image") ? (
+                <img src={review.thumbnail} alt="검수 이미지" style={{width: "100%", borderRadius: 6, border: `0.5px solid ${COLORS.border}`}}/>
               ) : (
-                <span style={{fontSize: 16}}>📄</span>
+                <div style={{padding: 40, textAlign: "center", background: COLORS.surface, borderRadius: 6, color: COLORS.textLight, fontSize: 12}}>이미지 없음</div>
               )}
+              <div style={{marginTop: 10, fontSize: 12, color: COLORS.text}}>
+                <div style={{marginBottom: 4}}><span style={{color: COLORS.textHint}}>제품/캠페인:</span> {review.product || "-"}</div>
+                <div style={{marginBottom: 4}}><span style={{color: COLORS.textHint}}>채널:</span> <span style={{background: "#F1EFE8", color: "#444", padding: "1px 6px", borderRadius: 6, fontSize: 11}}>{review.channel}</span></div>
+                <div><span style={{color: COLORS.textHint}}>상태:</span> <span style={{color: issuesTotal > 0 ? COLORS.accentText : COLORS.success, fontWeight: 500}}>{issuesTotal > 0 ? `⚠ ${issuesTotal}건 검출` : "✓ 통과"}</span></div>
+              </div>
             </div>
-            <div style={{minWidth: 0}}>
-              <p style={{fontSize: 12, fontWeight: 500, margin: "0 0 2px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap"}}>{h.product || "-"}</p>
-              <div style={{fontSize: 10, color: COLORS.textHint, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap"}}>
-                <span>{h.reviewer}</span>
-                <span style={{width: 2, height: 2, background: COLORS.textLight, borderRadius: "50%"}}/>
-                <span>{formatTime(h.created_at)}</span>
-                <span style={{width: 2, height: 2, background: COLORS.textLight, borderRadius: "50%"}}/>
-                <span style={{background: "#F1EFE8", color: "#444", padding: "1px 5px", borderRadius: 6, fontSize: 9}}>{h.channel}</span>
-                <span style={{width: 2, height: 2, background: COLORS.textLight, borderRadius: "50%"}}/>
-                <span style={{color: h.total_issue_count > 0 ? COLORS.accentText : COLORS.success, fontWeight: 500}}>
-                  {h.total_issue_count > 0 ? `⚠ ${h.total_issue_count}건` : "✓ 통과"}
-                </span>
+
+            <div>
+              <div style={{fontSize: 11, fontWeight: 500, color: COLORS.textHint, letterSpacing: "1px", textTransform: "uppercase", marginBottom: 8}}>OCR 추출 텍스트</div>
+              <div style={{background: COLORS.surface, padding: 12, borderRadius: 6, fontSize: 12, lineHeight: 1.7, whiteSpace: "pre-wrap", maxHeight: 280, overflowY: "auto"}}>
+                {review.ocr_text || <span style={{color: COLORS.textLight}}>없음</span>}
               </div>
             </div>
           </div>
-        ))}
+
+          {review.auto_detections && review.auto_detections.length > 0 && (
+            <div style={{marginBottom: 20}}>
+              <div style={{fontSize: 11, fontWeight: 500, color: COLORS.textHint, letterSpacing: "1px", textTransform: "uppercase", marginBottom: 8}}>자동 감지 ({review.auto_detections.length}건)</div>
+              {review.auto_detections.map((d, i) => (
+                <div key={i} style={{background: COLORS.accentBg, borderLeft: `3px solid ${COLORS.accent}`, padding: "10px 12px", borderRadius: "0 5px 5px 0", marginBottom: 6, fontSize: 12}}>
+                  <p style={{color: COLORS.accentText, fontWeight: 500, margin: "0 0 3px"}}>⚠ "{d.problem}"</p>
+                  <p style={{color: "#5a4a44", margin: 0}}>수정 제안: "{d.suggestion}"</p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {review.manual_issues && review.manual_issues.length > 0 && (
+            <div style={{marginBottom: 20}}>
+              <div style={{fontSize: 11, fontWeight: 500, color: COLORS.textHint, letterSpacing: "1px", textTransform: "uppercase", marginBottom: 8}}>검수자가 작성한 문제점 ({review.manual_issues.length}건)</div>
+              {review.manual_issues.map((d, i) => (
+                <div key={i} style={{background: COLORS.bg, border: `0.5px solid ${COLORS.border}`, padding: "10px 12px", borderRadius: 5, marginBottom: 6, fontSize: 12}}>
+                  <p style={{fontWeight: 500, margin: "0 0 4px", color: "#444"}}>문제점 {i+1}</p>
+                  <p style={{margin: "0 0 6px", lineHeight: 1.5}}>{d.problem}</p>
+                  {d.suggestion && (
+                    <p style={{margin: 0, color: COLORS.success, fontSize: 11}}>→ 수정 제안: {d.suggestion}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {issuesTotal === 0 && (
+            <div style={{padding: 30, textAlign: "center", background: "#F0F7F1", borderRadius: 6, color: COLORS.success, fontSize: 13, fontWeight: 500}}>
+              ✓ 검수 통과 — 검출된 문제가 없습니다
+            </div>
+          )}
+        </div>
+
+        <div style={{padding: "12px 24px", borderTop: `0.5px solid ${COLORS.border}`, display: "flex", justifyContent: "flex-end", gap: 8}}>
+          <button className="btn btn-light" onClick={handleDelete} style={{color: COLORS.accentText, borderColor: "#F0997B"}}>이력 삭제</button>
+          <button className="btn btn-dark" onClick={onClose}>닫기</button>
+        </div>
       </div>
     </div>
   );
