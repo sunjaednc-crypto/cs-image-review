@@ -5,8 +5,8 @@ import { createClient } from "@supabase/supabase-js";
 // ⚠️ 여기 2줄만 수정하세요!
 // Supabase 프로젝트 설정 > API Keys 메뉴에서 복사해서 붙여넣기
 // ═══════════════════════════════════════════════════════════
-const SUPABASE_URL = "여기에_SUPABASE_URL_붙여넣기";
-const SUPABASE_ANON_KEY = "여기에_SUPABASE_ANON_KEY_붙여넣기";
+const SUPABASE_URL = "https://lrtqrngbgzkkxnypouvj.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable__lSnba-jeLmVzjrB24D1gA_ByhunaT5";
 // ═══════════════════════════════════════════════════════════
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
